@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Agent Run</title>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 640px;
+      margin: 60px auto;
+      padding: 0 24px;
+      background: #fafafa;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 32px; }
+
+    .card {
+      background: white;
+      border: 1px solid #e5e5e5;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    label { font-size: 13px; font-weight: 600; color: #555; display: block; margin-bottom: 6px; }
+    input[type=text], input[type=number] {
+      width: 100%;
+      font-size: 15px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-family: inherit;
+    }
+    input[type=text]:focus, input[type=number]:focus { outline: none; border-color: #4f46e5; }
+    .fail-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .fail-row input[type=number] { width: 70px; margin-bottom: 0; }
+    .fail-row label { margin-bottom: 0; }
+
+    button {
+      background: #4f46e5;
+      color: white;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s;
+    }
+    button:hover { background: #4338ca; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+
+    #output:empty { display: none; }
+
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      background: #f5f5f7;
+      opacity: 0;
+      transform: translateY(6px);
+      animation: fadeIn 0.35s ease forwards;
+    }
+    .step.error { background: #fef2f2; }
+    @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+
+    .step-icon {
+      width: 24px; height: 24px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: white; flex-shrink: 0; margin-top: 1px;
+    }
+    .step-icon.ok { background: #22c55e; }
+    .step-icon.err { background: #ef4444; }
+
+    .step-body { font-size: 14px; line-height: 1.4; }
+    .step-tool { font-weight: 600; text-transform: capitalize; }
+    .step-cost { color: #888; font-size: 12px; margin-top: 2px; }
+
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid #ddd; border-top-color: #4f46e5;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      display: inline-block; vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .summary { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid #eee; }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; letter-spacing: 0.3px; }
+    .badge.completed { background: #dcfce7; color: #15803d; }
+    .badge.failed { background: #fee2e2; color: #b91c1c; }
+    .credits { font-size: 14px; font-weight: 600; color: #444; }
+    .result-line { font-size: 14px; color: #333; margin-top: 10px; }
+    .note-line { font-size: 12px; color: #999; margin-top: 8px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Agent Run Console</h1>
+  <div class="subtitle">Give it a goal. Watch it work. See what it cost.</div>
+
+  <div class="card">
+    <label>Goal</label>
+    <input type="text" id="goal" placeholder="e.g. research AI agent pricing" />
+
+    <div class="fail-row">
+      <label style="margin:0;">Force step to fail:</label>
+      <input type="number" id="forceFail" min="1" max="2" />
+      <span style="font-size:12px;color:#999;">(optional, for testing)</span>
+    </div>
+
+    <button id="runBtn" onclick="runAgent()">Run Agent</button>
+  </div>
+
+  <div id="output"></div>
+
+  <script>
+    function stepHTML(step) {
+      const isError = step.error !== undefined;
+      if (isError) {
+        return `<div class="step error">
+          <div class="step-icon err">!</div>
+          <div class="step-body">
+            <div class="step-tool">Step ${step.step} failed</div>
+            <div>${step.error}</div>
+            <div class="step-cost">${step.attempts} attempt(s), no charge for this step</div>
+          </div>
+        </div>`;
+      }
+      return `<div class="step">
+        <div class="step-icon ok">✓</div>
+        <div class="step-body">
+          <div class="step-tool">${step.tool.replace('_',' ')}</div>
+          <div>${step.output}</div>
+          <div class="step-cost">${step.cost} credits</div>
+        </div>
+      </div>`;
+    }
+
+    async function runAgent() {
+      const goal = document.getElementById('goal').value;
+      const forceFailVal = document.getElementById('forceFail').value;
+      const output = document.getElementById('output');
+      const btn = document.getElementById('runBtn');
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Running...';
+      output.innerHTML = '<div class="card"><div style="color:#888;font-size:14px;">Contacting agent...</div></div>';
+
+      const idempotencyKey = 'ui-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      const body = { goal: goal };
+      if (forceFailVal) body.force_fail_step = parseInt(forceFailVal);
+
+      const res = await fetch('/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+
+      // Reveal steps one at a time for a "watching it work" feel
+      output.innerHTML = '<div class="card"><div id="stepsWrap"></div><div id="summaryWrap"></div></div>';
+      const stepsWrap = document.getElementById('stepsWrap');
+
+      for (let i = 0; i < data.steps.length; i++) {
+        await new Promise(r => setTimeout(r, 350));
+        stepsWrap.innerHTML += stepHTML(data.steps[i]);
+      }
+
+      await new Promise(r => setTimeout(r, 200));
+      const summary = document.getElementById('summaryWrap');
+      let html = `<div class="summary">
+        <span class="badge ${data.status}">${data.status.toUpperCase()}</span>
+        <span class="credits">${data.credits_spent} credits spent</span>
+      </div>`;
+      if (data.result) html += `<div class="result-line">${data.result}</div>`;
+      if (data.note) html += `<div class="note-line">${data.note}</div>`;
+      summary.innerHTML = html;
+
+      btn.disabled = false;
+      btn.innerHTML = 'Run Agent';
+    }
+  </script>
+</body>
+</html>
